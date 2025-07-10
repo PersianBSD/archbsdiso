@@ -1,0 +1,139 @@
+#!/bin/sh
+#
+# Copyright (c) 2021, The NomadBSD Project
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# * Redistributions of source code must retain the above copyright notice, this
+#   list of conditions and the following disclaimer.
+#
+# * Redistributions in binary form must reproduce the above copyright notice,
+#   this list of conditions and the following disclaimer in the documentation
+#   and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+
+# PROVIDE: ackfwl
+# REQUIRE: NETWORKING dsbdriverd
+# BEFORE: LOGIN
+
+. /etc/rc.subr
+
+ackfwl_enable=${ackfwl_enable-"NO"}
+
+name="ackfwl"
+rcvar="ackfwl_enable"
+start_cmd="${name}_start"
+
+path_loader_conf="/boot/loader.conf"
+modules="
+iwi:/usr/share/doc/legal/intel_iwi.LICENSE
+ipw:/usr/share/doc/legal/intel_ipw.LICENSE
+"
+
+get_netifs() {
+	(ifconfig -l; sysctl -n net.wlan.devices;
+	 pciconf -lv | grep -B3 network | awk '
+		/^[a-z]+[0-9]@/	{
+			if (split($0, a, "@") > 0)
+				print a[1];
+		}
+	') | tr ' \t' '\n\n' | sort -n | uniq | sed '/^lo0/d'
+}
+
+was_ackd() {
+	local module=$1
+
+	case $module in
+	iwi)
+		ack=$(sysctl -n legal.intel_iwi.license_ack) || return 1
+		return [ $ack -ne 0 ]
+		;;
+	ipw)
+		ack=$(sysctl -n legal.intel_ipw.license_ack) || return 1
+		return [ $ack -ne 0 ]
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
+main_menu() {
+	local msg="In order to be able to use the $1 driver, it is necessary to"
+	local msg="${msg} acknowledge its firmware license. It will take"
+	local msg="${msg} effect after rebooting the system.\n"
+	local msg="${msg} Press <SPACE> to activate an item"
+	local selection="/tmp/ackfwl.$$"
+
+	TERM=xterm dialog \
+		--title "NETWORK DRIVER LICENSE" \
+		--radiolist "${msg}" 15 60 3 \
+		Read   "Read the license text" on  \
+		Accept "Accept the license"    off \
+		Reject "Reject the license"    off 2>"${selection}"
+	menu_selection=$(cat "${selection}")
+	rm -f "${selection}" 2>/dev/null
+}
+
+show_license_text() {
+	TERM=xterm dialog --textbox "$1" 20 75
+}
+
+accept_license() {
+	local module=$1
+
+	case $module in
+	iwi)
+		echo 'legal.intel_iwi.license_ack=1' >> ${path_loader_conf}
+		;;
+	ipw)
+		echo 'legal.intel_ipw.license_ack=1' >> ${path_loader_conf}
+		;;
+	*)
+		return
+		;;
+	esac
+	echo "$module license accepted"
+}
+
+ackfwl_start() {
+	local netifs=$(get_netifs)
+
+	[ -z "$netifs" ] && exit 0
+
+	for m in $modules; do
+		modname=${m%:*}
+		license=${m#*:}
+		echo $netifs | grep -q $modname || continue
+		was_ackd $modname && continue
+		while [ true ]; do
+			main_menu $modname || break
+			case "$menu_selection" in
+			Read)	show_license_text $license
+					;;
+			Accept)	accept_license $modname
+					break
+					;;
+			*)		break
+					;;
+			esac
+		done
+	done
+}
+
+load_rc_config $name
+run_rc_command "$1"
+

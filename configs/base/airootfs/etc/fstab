@@ -1,0 +1,4 @@
+tmpfs			/tmp			tmpfs	  rw,mode=1777     0 0
+tmpfs			/var/log		tmpfs	  rw               0 0
+proc			/proc			procfs	  rw		   0 0
+

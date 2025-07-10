@@ -1,0 +1,14 @@
+vim
+bash
+sudo
+ntp
+openntpd
+pf
+devd
+openssh-portable
+dhclient
+wget
+curl
+pkg
+clang
+
